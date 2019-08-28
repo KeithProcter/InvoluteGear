@@ -1,0 +1,194 @@
+Option Explicit
+'Script written by Keith Procter
+'Script version Monday, July 16, 2018 12:44:26 AM
+
+Call Main()
+
+Function Inv(phi)
+	Inv = Tan(phi) - phi
+End Function
+
+Function asin(x)
+	asin = atn(x / sqr(-x * x + 1))
+End Function
+
+Function acos(x)
+	acos = atn(-x / sqr(-x * x + 1)) + 2 * atn(1)
+End Function
+
+Function radtodeg(x)
+	radtodeg = x * 360 / Rhino.PI / 2
+End Function
+
+Function DrawGear(DP, NT, PA)
+	rem http://www.nashua.edu/paradisem1/Machinery's%20Handbook%2027th/27_Gears_10.pdf
+	rem http://hessmer.org/gears/InvoluteSpurGearBuilder.html
+	
+	Dim PitchDia, arrPlane
+	Dim arrPoints(20)
+	Dim arrTopPoints(20)
+	Dim arrPoint(2)
+	Dim x
+	Dim BaseDia, OutsideDia, a, b, RootDia, t, ToothAngularThickness
+	Dim umax
+	Dim pitchCircle, ODCircle
+	
+	arrPlane = Rhino.WorldXYPlane()
+
+	PitchDia = NT / DP
+	BaseDia = PitchDia * cos(PA * 2 * Rhino.PI / 360)
+	OutsideDia = (NT + 2) / DP ' Full Depth Teeth
+	a = 1.000 / DP ' Addendum
+	b = 1.250 / DP ' Dedendum
+	RootDia = PitchDia - b
+	t = Rhino.PI / (2 * DP) ' Circular tooth thickness
+
+	ODCircle = Rhino.AddCircle(arrPlane, OutsideDia / 2)
+	pitchCircle = Rhino.AddCircle(arrPlane, PitchDia / 2)
+
+	umax = acos(RootDia / OutsideDia) * 2  'estimate the extent of the curve
+	
+	For x = 0 To 20
+		Dim u
+		u = x * umax / 20.0
+		arrPoint(0) = RootDia / 2 * (cos(u) + u * sin(u))
+		arrPoint(1) = RootDia / 2 * (sin(u) - u * cos(u))
+		
+		arrPoint(2) = 0.0
+		arrPoints(x) = arrPoint
+	Next
+	
+	For x = 20 To 0 Step -1
+		arrTopPoints(x) = arrPoints(20 - x)
+		arrTopPoints(x)(1) = -arrTopPoints(x)(1) 
+	Next
+	
+	Dim rhPoly1,rhPoly2, objData, involuteIntersection, involArcAng, toothAngle
+	
+	rhPoly1 = Rhino.AddPolyline(arrPoints)
+	
+	' Figure out where that intersects the pitch circle to calculate the rotation amount
+	
+	involuteIntersection = Rhino.CurveCurveIntersection(rhPoly1, pitchCircle, 0.001)
+	involArcAng = asin(involuteIntersection(0, 1)(1) / (PitchDia / 2))
+	toothAngle = t / (PitchDia / 2)
+	
+	ToothAngularThickness = radtodeg(involArcAng + toothAngle / 2)
+		
+	arrPoint(0) = 0.0
+	arrPoint(1) = 0.0
+	arrPoint(2) = 0.0
+	Call Rhino.RotateObject(rhPoly1, arrPoint, -ToothAngularThickness)
+
+	
+	rhPoly2 = Rhino.AddPolyline(arrTopPoints)
+	arrPoint(0) = 0.0
+	arrPoint(1) = 0.0
+	arrPoint(2) = 0.0
+	Call Rhino.RotateObject(rhPoly2, arrPoint, ToothAngularThickness)
+
+	' Trim the involute curves to match the outside diameter
+	
+	Dim ODCrvInt,arrInterval
+	
+	ODCrvInt = Rhino.CurveCurveIntersection(rhPoly1, ODCircle, 0.001)
+	arrInterval = Rhino.CurveDomain(rhPoly1)
+	
+	arrInterval(1) = ODCrvInt(0, 5)
+	
+	rhPoly1 = Rhino.TrimCurve(rhPoly1, arrInterval, True)
+
+	ODCrvInt = Rhino.CurveCurveIntersection(rhPoly2, ODCircle, 0.001)
+	arrInterval = Rhino.CurveDomain(rhPoly2)
+	
+	arrInterval(1) = ODCrvInt(0, 5)
+	
+	rhPoly2 = Rhino.TrimCurve(rhPoly2, array(arrInterval(1), arrInterval(0)), True)
+	
+	Dim rotatedTopObjPts, rotatedObjPts
+
+	rotatedTopObjPts = Rhino.PolylineVertices(rhPoly2)
+	rotatedObjPts = Rhino.PolylineVertices(rhPoly1)
+
+	Dim ODArc
+	
+	arrPoint(0) = OutsideDia / 2
+	arrPoint(1) = 0.0
+	arrPoint(2) = 0.0
+	ODArc = Rhino.AddArc3Pt(rotatedObjPts(UBound(rotatedObjPts)), rotatedTopObjPts(0), arrPoint)
+
+	Dim joiningObjs, joinedTooth, dedendalArc, joinedSeg
+	ReDim joiningObjs(2)
+	' Put all the curves of the tooth together
+	joiningObjs(0) = rhPoly2
+	joiningObjs(1) = ODArc
+	joiningObjs(2) = rhPoly1
+	' Rotate the constructed tooth into position
+	arrPoint(0) = 0.0
+	arrPoint(1) = 0.0
+	arrPoint(2) = 0.0
+	Dim toothCopy
+	Call Rhino.RotateObjects(joiningObjs, arrPoint, 360 / NT)
+	
+	' Draw the dedendal "arc" from the bottom of the tooth to y=0
+	rotatedObjPts = Rhino.PolylineVertices(rhPoly1)
+	arrPoint(0) = rotatedObjPts(0)(0)
+	arrPoint(1) = 0.0
+	dedendalArc = Rhino.AddArc3Pt(rotatedObjPts(0), Rhino.Polar(array(0, 0, 0), radtodeg(toothAngle / 2 + involArcAng), RootDia / 2), Rhino.Polar(array(0, 0, 0), radtodeg(toothAngle), RootDia / 2))
+	'	dedendalArc = Rhino.AddArc(arrPlane, RootDia / 2, radtodeg(toothAngle))
+
+	ReDim joiningObjs(3)
+	joiningObjs(0) = rhPoly2
+	joiningObjs(1) = ODArc
+	joiningObjs(2) = rhPoly1
+	joiningObjs(3) = dedendalArc
+	Dim all
+	all = Rhino.JoinCurves(joiningObjs, True)
+
+	Dim teeth()
+	ReDim teeth(NT-1)
+	teeth(0) = all(0)
+	For x = 1 To (NT - 1)
+		toothCopy = Rhino.CopyObject(all(0))
+		teeth(x) = toothCopy
+		Call Rhino.RotateObject(toothCopy, array(0, 0, 0), x * 360 / NT)
+	Next
+	
+	Dim gear, gearsrf
+	gear = Rhino.JoinCurves(teeth, True)
+	
+	Dim centerpoint, textdesc1, textdesc2
+	centerpoint = Rhino.AddCircle(arrPlane, 0.125)
+	
+	textdesc1 = Rhino.AddText("DP" & DP & " NT" & NT & " PA" & PA & " m" & round(25.4 / DP, 3), array(0, 0, 0), 0.05, "Calibri")
+	textdesc2 = Rhino.AddText("OD " & round(OutsideDia, 3) & " RD " & round(PitchDia, 3), array(0, -0.08, 0), 0.05, "Calibri")
+	'	Call Rhino.AddCircle(arrPlane, BaseDia / 2)
+	'	Call Rhino.AddCircle(arrPlane, RootDia / 2)
+
+	Rhino.DeleteObject(pitchCircle)
+	Rhino.DeleteObject(ODCircle)
+	'	gearsrf = Rhino.AddPlanarSrf(gear)
+	'	Rhino.ExtrudeSurface(gearsrf,
+	Dim grpName 
+	grpName = "DP" & DP & "NT" & NT & "PA" & PA
+	Call Rhino.AddGroup(grpName)
+	Call Rhino.AddObjectsToGroup(array(gear(0), centerpoint, textdesc1, textdesc2), grpName)
+	
+	
+End Function
+
+Sub Main()
+
+	Dim DP, NT, PA
+	
+	DP = Rhino.GetReal("Diametral Pitch", 12.7)
+	NT = Rhino.GetInteger("Number of Teeth", 18)
+	PA = Rhino.GetReal("Pressure Angle", 20.0)
+	'Call DrawGear(DP, NT, PA)
+	Rhino.EnableRedraw False
+	For NT = 8 To 48 
+	Call DrawGear(DP, NT, PA)
+	Next
+	Rhino.EnableRedraw True
+	
+End Sub
