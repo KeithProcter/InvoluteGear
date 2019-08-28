@@ -177,7 +177,7 @@ Function DrawGear(DP, NT, PA)
 	
 End Function
 
-Sub Main()
+Sub InvoluteGear()
 
 	Dim DP, NT, PA
 	
@@ -186,9 +186,9 @@ Sub Main()
 	PA = Rhino.GetReal("Pressure Angle", 20.0)
 	'Call DrawGear(DP, NT, PA)
 	Rhino.EnableRedraw False
-	For NT = 8 To 48 
+	' For NT = 8 To 48 
 	Call DrawGear(DP, NT, PA)
-	Next
+	' Next
 	Rhino.EnableRedraw True
 	
 End Sub
